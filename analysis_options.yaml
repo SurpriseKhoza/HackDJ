@@ -1,0 +1,11 @@
+include: package:flutter_lints/flutter.yaml
+
+analyzer:
+  errors:
+    # Audio-engine calls are synchronous FFI wrappers; keep lint noise low.
+    avoid_print: warning
+
+linter:
+  rules:
+    prefer_const_constructors: true
+    prefer_final_locals: true
