@@ -1,0 +1,19 @@
+name: hackdj_media
+description: Reads the music library of the device (Android MediaStore) for HackDJ.
+version: 0.1.0
+publish_to: none
+
+environment:
+  sdk: ^3.11.0
+  flutter: ">=3.41.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+flutter:
+  plugin:
+    platforms:
+      android:
+        package: io.surprise.hackdj_media
+        pluginClass: HackdjMediaPlugin
