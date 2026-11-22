@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/widgets.dart';
 
 import '../audio/sampler.dart';
@@ -62,43 +64,67 @@ class SamplerPanel extends StatelessWidget {
   }
 }
 
-class _PadButton extends StatelessWidget {
+class _PadButton extends StatefulWidget {
   const _PadButton({required this.sampler, required this.index});
 
   final Sampler sampler;
   final int index;
 
   @override
+  State<_PadButton> createState() => _PadButtonState();
+}
+
+class _PadButtonState extends State<_PadButton> {
+  bool _flash = false;
+  Timer? _timer;
+
+  Pad get _pad => widget.sampler.pads[widget.index];
+
+  void _hit() {
+    widget.sampler.trigger(widget.index);
+    _timer?.cancel();
+    setState(() => _flash = true);
+    _timer = Timer(const Duration(milliseconds: 120), () {
+      if (mounted) setState(() => _flash = false);
+    });
+  }
+
+  @override
+  void dispose() {
+    _timer?.cancel();
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
-    final pad = sampler.pads[index];
+    final pad = _pad;
+    final lit = _flash || (widget.sampler.loopMode && widget.sampler.isLatched(pad));
     return GestureDetector(
-      onLongPress: () => sampler.loadCustom(index),
+      onLongPress: () => widget.sampler.loadCustom(widget.index),
       // Listener fires on touch-down with no tap delay: pads must feel instant.
       child: Listener(
-        onPointerDown: (_) => sampler.trigger(index),
-        child: ValueListenableBuilder<int>(
-          valueListenable: pad.hits,
-          builder: (context, hits, _) {
-            final latched = pad.loopHandle != null && sampler.loopMode;
-            return AnimatedContainer(
-              duration: const Duration(milliseconds: 140),
-              decoration: BoxDecoration(
-                color: pad.color.withValues(alpha: hits.isOdd || latched ? 0.55 : 0.16),
-                borderRadius: BorderRadius.circular(12),
-                border: Border.all(color: pad.color, width: 1.4),
-              ),
-              alignment: Alignment.center,
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Text('${index + 1}', style: ts(18, color: pad.color, weight: FontWeight.w800)),
-                  const SizedBox(height: 2),
-                  Text(pad.name, style: ts(10, color: Palette.text), maxLines: 1),
-                  if (pad.custom) Text('CUSTOM', style: ts(8, color: Palette.dim)),
-                ],
-              ),
-            );
-          },
+        onPointerDown: (_) => _hit(),
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 90),
+          decoration: BoxDecoration(
+            color: pad.color.withValues(alpha: lit ? 0.6 : 0.16),
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(color: pad.color, width: 1.4),
+            boxShadow: lit
+                ? [BoxShadow(color: pad.color.withValues(alpha: 0.5), blurRadius: 14)]
+                : null,
+          ),
+          alignment: Alignment.center,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text('${widget.index + 1}',
+                  style: ts(18, color: pad.color, weight: FontWeight.w800)),
+              const SizedBox(height: 2),
+              Text(pad.name, style: ts(10), maxLines: 1),
+              if (pad.custom) Text('CUSTOM', style: ts(8, color: Palette.dim)),
+            ],
+          ),
         ),
       ),
     );
