@@ -7,6 +7,7 @@ import 'package:flutter_soloud/flutter_soloud.dart';
 
 import 'bpm.dart';
 import 'models.dart';
+import 'wav.dart';
 
 typedef BpmCallback = void Function(Track track, double bpm);
 
@@ -46,6 +47,9 @@ class Deck extends ChangeNotifier {
   /// Seconds into the track (track time, not scaled by pitch) where the first
   /// beat of the grid falls. Beat n sits at `beatOffset + n * 60 / bpm`.
   double beatOffset = 0;
+
+  /// When on, cues and loop points snap to the nearest beat of the grid.
+  bool quantize = false;
 
   /// Updated ~30 times a second; listen to this, not the whole deck.
   final ValueNotifier<Duration> position = ValueNotifier(Duration.zero);
@@ -261,6 +265,12 @@ class Deck extends ChangeNotifier {
   }
 
   Future<void> eject() async {
+    _scratchIdle?.cancel();
+    _stopRevVoice();
+    final rev = _revSource;
+    _revSource = null;
+    if (rev != null) await soloud.disposeSource(rev);
+
     final h = _handle;
     _handle = null;
     if (h != null && soloud.getIsValidVoiceHandle(h)) {
@@ -374,6 +384,14 @@ class Deck extends ChangeNotifier {
     return Duration(microseconds: (snapped * 1e6).round());
   }
 
+  /// [p], snapped to the beat grid when quantize is on.
+  Duration _quantised(Duration p) => quantize ? _snapToBeat(p) : p;
+
+  void toggleQuantize() {
+    quantize = !quantize;
+    notifyListeners();
+  }
+
   // ----------------------------------------------------------- transport
   SoundHandle _spawn(Duration at, {required bool paused}) {
     final h = bus.play(_source!, volume: _trimGain, paused: true);
@@ -422,7 +440,7 @@ class Deck extends ChangeNotifier {
       pause();
       seek(cuePoint ?? Duration.zero);
     } else {
-      cuePoint = position.value;
+      cuePoint = _quantised(position.value);
       notifyListeners();
     }
   }
@@ -432,7 +450,7 @@ class Deck extends ChangeNotifier {
     if (!isLoaded) return;
     final existing = hotCues[i];
     if (existing == null) {
-      hotCues[i] = position.value;
+      hotCues[i] = _quantised(position.value);
     } else {
       seek(existing);
     }
@@ -497,8 +515,9 @@ class Deck extends ChangeNotifier {
     _applyRate();
   }
 
-  /// Match this deck's tempo to [other] (octave-folded). Beat *phase* is left
-  /// to the DJ: use the bend buttons or the jog wheel.
+  /// Match this deck's tempo to [other] (octave-folded) and, when [other] is
+  /// playing, line this deck's beats up with its beats by nudging the
+  /// playhead to the nearest matching beat phase.
   void syncTo(Deck other) {
     if (bpm <= 0 || other.bpm <= 0) return;
     var target = other.currentBpm;
@@ -515,10 +534,28 @@ class Deck extends ChangeNotifier {
         tempo = ((ratio - 1) / r.fraction).clamp(-1.0, 1.0).toDouble();
         _applyRate();
         _applyFx();
+        _alignPhaseTo(other);
         notifyListeners();
         return;
       }
     }
+  }
+
+  /// Fraction of a beat (0..1) that [d]'s playhead is past its last grid beat.
+  double _beatPhase(Deck d) {
+    final beats =
+        (d.position.value.inMicroseconds / 1e6 - d.beatOffset) * d.bpm / 60;
+    return beats - beats.floorToDouble();
+  }
+
+  void _alignPhaseTo(Deck other) {
+    if (!isLoaded || !other.isLoaded || !other.playing) return;
+    if (bpm <= 0 || other.bpm <= 0) return;
+    var diff = _beatPhase(other) - _beatPhase(this);
+    if (diff > 0.5) diff -= 1;
+    if (diff < -0.5) diff += 1;
+    final shift = Duration(microseconds: (diff * 60 / bpm * 1e6).round());
+    seek(position.value + shift);
   }
 
   final List<int> _taps = [];
@@ -542,7 +579,7 @@ class Deck extends ChangeNotifier {
 
   // -------------------------------------------------------------------- loops
   void setLoopIn() {
-    loopIn = position.value;
+    loopIn = _quantised(position.value);
     final out = loopOut;
     if (out != null && out <= loopIn!) {
       loopOut = null;
@@ -555,7 +592,7 @@ class Deck extends ChangeNotifier {
   void setLoopOut() {
     final start = loopIn;
     if (start == null) return;
-    final p = position.value;
+    final p = _quantised(position.value);
     if (p <= start) return;
     loopOut = p;
     loopActive = true;
@@ -600,24 +637,192 @@ class Deck extends ChangeNotifier {
   }
 
   // ------------------------------------------------------------ jog / scratch
+  //
+  // SoLoud cannot play a voice backwards, so scratching works like this:
+  //  * moving the jog forwards plays the normal voice at the wheel's speed,
+  //  * moving it backwards plays a pre-rendered *reversed* clip of the audio
+  //    around the playhead (see [_prepareReverse]) at the wheel's speed,
+  //  * holding it still is silent, like a hand on the record.
+  // If the reversed clip cannot be built, backwards motion is simply silent.
+  AudioSource? _revSource;
+  SoundHandle? _revHandle;
+  double _revStart = 0; // track time (s) at the start of the reversed clip
+  double _revEnd = 0; // track time (s) at its end (= clip time 0)
+  bool _revBusy = false;
+  int _revCount = 0;
+
+  double _scratchPos = 0; // seconds; driven by the finger
+  double _scratchVel = 0; // track seconds per real second, smoothed
+  int _lastMoveUs = 0;
+  final Stopwatch _scratchClock = Stopwatch();
+  Timer? _scratchIdle;
+
+  static const int _revRate = 22050;
+
   /// Touching the jog wheel holds the record; dragging scrubs the playhead.
-  /// (SoLoud cannot play backwards, so scratching is seek-based.)
   void scratchStart() {
     _scratching = true;
     _wasPlaying = playing;
-    if (_voiceAlive) soloud.setPause(_handle!, true);
+    _scratchPos = position.value.inMicroseconds / 1e6;
+    _scratchVel = 0;
+    _lastMoveUs = 0;
+    _scratchClock
+      ..reset()
+      ..start();
+    if (!isLoaded) return;
+    if (!_voiceAlive) _handle = _spawn(position.value, paused: true);
+    soloud.setPause(_handle!, true);
+    unawaited(_prepareReverse(_scratchPos));
   }
 
   void scratchMove(double seconds) {
-    seek(position.value + Duration(milliseconds: (seconds * 1000).round()));
+    if (!isLoaded) return;
+    final total = duration.inMicroseconds / 1e6;
+    final now = _scratchClock.elapsedMicroseconds;
+    final dt = (now - _lastMoveUs) / 1e6;
+    _lastMoveUs = now;
+
+    _scratchPos = (_scratchPos + seconds).clamp(0.0, total).toDouble();
+    position.value = Duration(microseconds: (_scratchPos * 1e6).round());
+
+    if (dt > 0.002) {
+      _scratchVel = _scratchVel * 0.5 + (seconds / dt) * 0.5;
+    }
+    _updateScratchVoices();
+
+    _scratchIdle?.cancel();
+    _scratchIdle = Timer(const Duration(milliseconds: 70), () {
+      if (_scratching) _silenceScratch();
+    });
   }
 
   void scratchEnd() {
     _scratching = false;
+    _scratchIdle?.cancel();
+    _stopRevVoice();
+    if (_voiceAlive) {
+      final h = _handle!;
+      _guard(() {
+        soloud.setPause(h, true);
+        soloud.seek(h, position.value);
+      });
+      _applyRate();
+    }
     if (_wasPlaying) {
       play();
     } else {
       pause();
+    }
+  }
+
+  void _updateScratchVoices() {
+    final v = _scratchVel;
+    final fwd = _handle;
+    if (v.abs() < 0.05 || fwd == null) {
+      _silenceScratch();
+      return;
+    }
+    if (v > 0) {
+      _stopRevVoice();
+      _guard(() {
+        if (!soloud.getIsValidVoiceHandle(fwd)) return;
+        final at = soloud.getPosition(fwd).inMicroseconds / 1e6;
+        if ((at - _scratchPos).abs() > 0.1) {
+          soloud.seek(fwd, Duration(microseconds: (_scratchPos * 1e6).round()));
+        }
+        soloud.setRelativePlaySpeed(fwd, v.clamp(0.1, 4.0).toDouble());
+        soloud.setPause(fwd, false);
+      });
+    } else {
+      _guard(() {
+        if (soloud.getIsValidVoiceHandle(fwd)) soloud.setPause(fwd, true);
+      });
+      _playReverse(-v);
+    }
+  }
+
+  void _playReverse(double speed) {
+    final src = _revSource;
+    if (src == null) return;
+    final inWindow = _scratchPos > _revStart && _scratchPos < _revEnd;
+    if (!inWindow) {
+      // Scrubbed out of the pre-rendered window: build a new one around here.
+      _stopRevVoice();
+      unawaited(_prepareReverse(_scratchPos));
+      return;
+    }
+    final offset =
+        Duration(microseconds: ((_revEnd - _scratchPos) * 1e6).round());
+    _guard(() {
+      final existing = _revHandle;
+      final SoundHandle h;
+      if (existing != null && soloud.getIsValidVoiceHandle(existing)) {
+        h = existing;
+        final at = _revEnd - soloud.getPosition(h).inMicroseconds / 1e6;
+        if ((at - _scratchPos).abs() > 0.1) soloud.seek(h, offset);
+      } else {
+        h = bus.play(src, paused: true);
+        _revHandle = h;
+        soloud.seek(h, offset);
+      }
+      soloud.setRelativePlaySpeed(h, speed.clamp(0.1, 4.0).toDouble());
+      soloud.setPause(h, false);
+    });
+  }
+
+  void _stopRevVoice() {
+    final h = _revHandle;
+    _revHandle = null;
+    if (h == null) return;
+    _guard(() {
+      if (soloud.getIsValidVoiceHandle(h)) soloud.stop(h);
+    });
+  }
+
+  void _silenceScratch() {
+    _scratchVel = 0;
+    final h = _handle;
+    _guard(() {
+      if (h != null && soloud.getIsValidVoiceHandle(h)) soloud.setPause(h, true);
+    });
+    _stopRevVoice();
+  }
+
+  /// Renders a reversed, mono, 22 kHz copy of the 4 s of audio around
+  /// [centre] (3 s before, 1 s after) for backwards scratching.
+  Future<void> _prepareReverse(double centre) async {
+    final t = track;
+    if (t == null || _revBusy) return;
+    _revBusy = true;
+    try {
+      final total = duration.inMicroseconds / 1e6;
+      final start = math.max(0.0, centre - 3);
+      final end = math.min(total, centre + 1);
+      if (end - start < 0.2) return;
+      final wanted = ((end - start) * _revRate).round();
+      final raw = await soloud.readSamplesFromFile(
+        t.path,
+        wanted,
+        startTime: start,
+        endTime: end,
+        average: true,
+      );
+      if (!identical(track, t) || raw.isEmpty) return;
+      final wav = reversedMonoWav(raw, _revRate);
+      final src = await soloud.loadMem('scratch-$id-${_revCount++}.wav', wav);
+      if (!identical(track, t)) {
+        await soloud.disposeSource(src);
+        return;
+      }
+      final old = _revSource;
+      _revSource = src;
+      _revStart = start;
+      _revEnd = start + raw.length / _revRate;
+      if (old != null) await soloud.disposeSource(old);
+    } catch (e) {
+      debugPrint('[Deck $id] reverse scratch clip failed: $e');
+    } finally {
+      _revBusy = false;
     }
   }
 
@@ -644,6 +849,7 @@ class Deck extends ChangeNotifier {
 
   @override
   void dispose() {
+    _scratchIdle?.cancel();
     position.dispose();
     level.dispose();
     super.dispose();
