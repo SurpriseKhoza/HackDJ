@@ -2,8 +2,12 @@ import 'package:flutter/widgets.dart';
 
 import '../palette.dart';
 
-/// Rounded hardware-style button. Supports tap, long-press and
-/// press-and-hold (via [onPressStart] / [onPressEnd]).
+/// Raised hardware-style button: a grey gradient face with a dark edge, and a
+/// solid [color] fill with dark text when [active]. Supports tap, long-press
+/// and press-and-hold (via [onPressStart] / [onPressEnd]).
+///
+/// A custom [child] is drawn as given, so on an active button it should use
+/// [Palette.onColor] to stay readable on the solid fill.
 class DjButton extends StatelessWidget {
   const DjButton({
     super.key,
@@ -32,7 +36,7 @@ class DjButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final fg = active ? color : Palette.text;
+    final fg = active ? Palette.onColor : Palette.text;
     return GestureDetector(
       behavior: HitTestBehavior.opaque,
       onTap: onTap,
@@ -44,15 +48,22 @@ class DjButton extends StatelessWidget {
         height: height,
         alignment: Alignment.center,
         decoration: BoxDecoration(
-          color: active ? color.withValues(alpha: 0.18) : Palette.panelHi,
-          borderRadius: BorderRadius.circular(8),
+          color: active ? color : null,
+          gradient: active
+              ? null
+              : const LinearGradient(
+                  begin: Alignment.topCenter,
+                  end: Alignment.bottomCenter,
+                  colors: [Color(0xFF5A5F6B), Palette.panelHi],
+                ),
+          borderRadius: BorderRadius.circular(6),
           border: Border.all(
-            color: active ? color : Palette.stroke,
-            width: 1.2,
+            color: active ? color : const Color(0xFF2A2D35),
+            width: 1,
           ),
-          boxShadow: active
-              ? [BoxShadow(color: color.withValues(alpha: 0.35), blurRadius: 10)]
-              : null,
+          boxShadow: const [
+            BoxShadow(color: Color(0x66000000), blurRadius: 3, offset: Offset(0, 1)),
+          ],
         ),
         child: child ??
             Text(label, style: ts(fontSize, color: fg), maxLines: 1),
