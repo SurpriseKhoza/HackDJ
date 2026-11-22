@@ -196,7 +196,8 @@ class Deck extends ChangeNotifier {
         final echo = bus.filters.echoFilter;
         if (fxOn[FxUnit.echo]!) {
           if (!echo.isActive) echo.activate();
-          echo.delay(soundHandle: h).value = (beat * 0.75).clamp(0.05, 2.9);
+          echo.delay(soundHandle: h).value =
+              (beat * 0.75).clamp(0.05, 2.9).toDouble();
           echo.decay(soundHandle: h).value = 0.5;
           echo.wet(soundHandle: h).value = fxAmount;
         } else if (echo.isActive) {
