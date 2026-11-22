@@ -37,7 +37,7 @@ class HackDjApp extends StatelessWidget {
       pageRouteBuilder: <T>(RouteSettings settings, WidgetBuilder builder) =>
           PageRouteBuilder<T>(
         settings: settings,
-        pageBuilder: (context, _, __) => builder(context),
+        pageBuilder: (context, _, _) => builder(context),
       ),
       home: startupError == null
           ? const DjScreen()
