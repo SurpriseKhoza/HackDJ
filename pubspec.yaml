@@ -14,9 +14,11 @@ dependencies:
   flutter:
     sdk: flutter
   flutter_soloud: ^5.3.1   # low-latency engine: buses, filters, mixer capture
-  file_picker: ^13.4.0     # import tracks / custom sampler sounds
-  path_provider: ^2.1.5    # library + recordings storage
+  file_picker: ^13.4.0     # custom sampler sounds
+  path_provider: ^2.1.5    # BPM cache + recordings storage
   path: ^1.9.1
+  hackdj_media:            # music library from internal storage / SD card
+    path: packages/hackdj_media
 
 dev_dependencies:
   flutter_test:
