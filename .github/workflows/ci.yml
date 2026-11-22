@@ -1,7 +1,5 @@
 name: CI
 
-# Move this file to .github/workflows/ci.yml (the GitHub connector used to
-# create the repo content is not allowed to write workflow files).
 on:
   push:
     branches: [main]
@@ -27,6 +25,11 @@ jobs:
       # name dj  =>  applicationId / namespace io.surprise.dj
       - name: Generate platform folders
         run: flutter create --org io.surprise --project-name dj --platforms=android,ios .
+
+      # `flutter create` drops in the default counter-app test, which doesn't
+      # match this app (MyApp, Icons, material_ui) and breaks analyze/test.
+      - name: Remove generated template test
+        run: rm -f test/widget_test.dart
 
       - run: flutter pub get
       - run: flutter analyze
