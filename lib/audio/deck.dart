@@ -43,6 +43,10 @@ class Deck extends ChangeNotifier {
   double bpm = 0;
   bool bpmAnalysing = false;
 
+  /// Seconds into the track (track time, not scaled by pitch) where the first
+  /// beat of the grid falls. Beat n sits at `beatOffset + n * 60 / bpm`.
+  double beatOffset = 0;
+
   /// Updated ~30 times a second; listen to this, not the whole deck.
   final ValueNotifier<Duration> position = ValueNotifier(Duration.zero);
   final ValueNotifier<double> level = ValueNotifier(0);
@@ -234,6 +238,7 @@ class Deck extends ChangeNotifier {
       track = t;
       duration = soloud.getLength(src);
       bpm = t.bpm ?? 0;
+      beatOffset = 0;
       tempo = 0;
       _bend = 0;
       cuePoint = Duration.zero;
@@ -241,7 +246,11 @@ class Deck extends ChangeNotifier {
       _applyRate();
       _applyFx();
       unawaited(_buildPeaks(t.path));
-      if (bpm <= 0) unawaited(_analyseBpm(t));
+      if (bpm <= 0) {
+        unawaited(_analyseBpm(t));
+      } else {
+        unawaited(_analyseGrid(t));
+      }
     } catch (e) {
       error = 'Could not load track: $e';
       _source = null;
@@ -265,6 +274,7 @@ class Deck extends ChangeNotifier {
     duration = Duration.zero;
     peaks = Float32List(0);
     bpm = 0;
+    beatOffset = 0;
     cuePoint = null;
     hotCues.fillRange(0, hotCues.length, null);
     loopIn = null;
@@ -306,6 +316,8 @@ class Deck extends ChangeNotifier {
     }
   }
 
+  /// Estimates both the tempo and the beat-grid phase of a track whose BPM is
+  /// not known yet.
   Future<void> _analyseBpm(Track t) async {
     final secs = duration.inMilliseconds / 1000;
     if (secs < 20) return;
@@ -314,11 +326,15 @@ class Deck extends ChangeNotifier {
     try {
       final raw = await soloud.readSamplesFromFile(t.path, (secs * 400).round());
       final pps = raw.length / secs;
-      final result = await Isolate.run(() => estimateBpm(raw, pps));
+      final result = await Isolate.run(() {
+        final b = estimateBpm(raw, pps);
+        return b == null ? null : (b, estimateBeatOffset(raw, pps, b));
+      });
       if (result != null && identical(track, t)) {
-        bpm = result;
-        t.bpm = result;
-        onBpmFound?.call(t, result);
+        bpm = result.$1;
+        beatOffset = result.$2 ?? 0;
+        t.bpm = result.$1;
+        onBpmFound?.call(t, result.$1);
         _applyFx();
       }
     } catch (e) {
@@ -326,6 +342,36 @@ class Deck extends ChangeNotifier {
     }
     bpmAnalysing = false;
     notifyListeners();
+  }
+
+  /// Finds the beat-grid phase for a track whose BPM is already known (from
+  /// the library or a previous TAP).
+  Future<void> _analyseGrid(Track t) async {
+    final secs = duration.inMilliseconds / 1000;
+    final knownBpm = bpm;
+    if (secs < 20 || knownBpm <= 0) return;
+    try {
+      final raw = await soloud.readSamplesFromFile(t.path, (secs * 400).round());
+      final pps = raw.length / secs;
+      final offset =
+          await Isolate.run(() => estimateBeatOffset(raw, pps, knownBpm));
+      if (offset != null && identical(track, t)) {
+        beatOffset = offset;
+        notifyListeners();
+      }
+    } catch (e) {
+      debugPrint('[Deck $id] beat grid analysis failed: $e');
+    }
+  }
+
+  /// Nearest beat on the grid to [p] (never before the start of the track).
+  Duration _snapToBeat(Duration p) {
+    if (bpm <= 0) return p;
+    final period = 60 / bpm;
+    final s = p.inMicroseconds / 1e6;
+    final k = ((s - beatOffset) / period).round();
+    final snapped = math.max(0.0, beatOffset + k * period);
+    return Duration(microseconds: (snapped * 1e6).round());
   }
 
   // ----------------------------------------------------------- transport
@@ -524,12 +570,14 @@ class Deck extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// Auto loop of [beats] beats starting at the playhead (needs a BPM).
+  /// Auto loop of [beats] beats, starting on the nearest beat of the grid to
+  /// the playhead (needs a BPM).
   void beatLoop(double beats) {
     if (bpm <= 0 || !isLoaded) return;
     final len = Duration(microseconds: (beats * 60 / bpm * 1e6).round());
-    loopIn = position.value;
-    loopOut = loopIn! + len;
+    final start = _snapToBeat(position.value);
+    loopIn = start;
+    loopOut = start + len;
     loopActive = true;
     _applyLoop();
     notifyListeners();
