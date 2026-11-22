@@ -167,7 +167,7 @@ class DeckPanel extends StatelessWidget {
                 onTap: deck.togglePlay,
                 child: GlyphIcon(
                   deck.playing ? Glyph.pause : Glyph.play,
-                  color: deck.playing ? color : Palette.text,
+                  color: deck.playing ? Palette.onColor : Palette.text,
                   size: 26,
                 ),
               ),
