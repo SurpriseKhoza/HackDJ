@@ -73,3 +73,66 @@ double? estimateBpm(Float32List samples, double pointsPerSecond) {
   }
   return (result * 10).round() / 10;
 }
+
+/// Position, in seconds, of the first beat of the grid for a track running at
+/// [bpm]: a value in `[0, 60 / bpm)`. Beat *n* then sits at
+/// `offset + n * 60 / bpm`.
+///
+/// The onset trace is folded over one beat period for every candidate phase
+/// and the phase that collects the most onset energy wins. Only the first
+/// 90 s are used so a slightly wrong [bpm] does not smear the fold.
+///
+/// Same inputs as [estimateBpm]; pure Dart, safe for `Isolate.run`.
+double? estimateBeatOffset(
+  Float32List samples,
+  double pointsPerSecond,
+  double bpm,
+) {
+  if (pointsPerSecond <= 0 ||
+      bpm <= 0 ||
+      samples.length < pointsPerSecond * 20) {
+    return null;
+  }
+
+  final group = math.max(1, (pointsPerSecond / 200).round());
+  final envRate = pointsPerSecond / group;
+  final total = samples.length ~/ group;
+  final n = math.min(total, (envRate * 90).floor());
+  if (n < 4) return null;
+
+  final onset = Float64List(n);
+  var prev = 0.0;
+  var last = 0.0;
+  for (var i = 0; i < n; i++) {
+    var m = 0.0;
+    for (var j = 0; j < group; j++) {
+      final v = samples[i * group + j].abs();
+      if (v > m) m = v;
+    }
+    final s = i > 0 ? m * 0.6 + last * 0.4 : m;
+    last = m;
+    final d = s - prev;
+    onset[i] = d > 0 ? d : 0;
+    prev = s;
+  }
+
+  final period = envRate * 60 / bpm; // beat length in envelope samples
+  if (period < 2) return null;
+
+  var bestPhase = 0.0;
+  var bestScore = -1.0;
+  for (var phase = 0.0; phase < period; phase += 0.5) {
+    var sum = 0.0;
+    for (var t = phase; t < n - 1; t += period) {
+      final i = t.floor();
+      final f = t - i;
+      sum += onset[i] * (1 - f) + onset[i + 1] * f;
+    }
+    if (sum > bestScore) {
+      bestScore = sum;
+      bestPhase = phase;
+    }
+  }
+  if (bestScore <= 0) return null;
+  return bestPhase / envRate;
+}
