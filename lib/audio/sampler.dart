@@ -1,17 +1,19 @@
+import 'dart:typed_data';
+import 'dart:ui' show Color;
+
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/foundation.dart';
-import 'package:flutter/painting.dart' show Color;
 import 'package:flutter_soloud/flutter_soloud.dart';
 
 import 'library.dart';
 import 'synth.dart';
 
 class Pad {
-  Pad(this.name, this.color, this._builtin);
+  Pad(this.name, this.color, this.builtin);
 
   final String name;
   final Color color;
-  final Uint8List Function() _builtin;
+  final Uint8List Function() builtin;
   AudioSource? source;
   SoundHandle? loopHandle;
   bool custom = false;
@@ -47,7 +49,7 @@ class Sampler extends ChangeNotifier {
     bus = soloud.createMixingBus(name: 'Sampler');
     bus.playOnEngine();
     for (final pad in pads) {
-      pad.source = await soloud.loadMem('${pad.name}.wav', pad._builtin());
+      pad.source = await soloud.loadMem('${pad.name}.wav', pad.builtin());
     }
     _applyVolume();
   }
@@ -68,15 +70,19 @@ class Sampler extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// True while the pad's latched loop is sounding.
+  bool isLatched(Pad pad) {
+    final h = pad.loopHandle;
+    return h != null && soloud.getIsValidVoiceHandle(h);
+  }
+
   void trigger(int i) {
     final pad = pads[i];
     final src = pad.source;
     if (src == null) return;
-    pad.hits.value++;
     if (loopMode) {
-      final h = pad.loopHandle;
-      if (h != null && soloud.getIsValidVoiceHandle(h)) {
-        soloud.stop(h);
+      if (isLatched(pad)) {
+        soloud.stop(pad.loopHandle!);
         pad.loopHandle = null;
       } else {
         pad.loopHandle = bus.play(src, looping: true);
@@ -84,6 +90,7 @@ class Sampler extends ChangeNotifier {
     } else {
       bus.play(src);
     }
+    pad.hits.value++;
   }
 
   /// Long-press a pad to replace its sound with a file of your own.
@@ -96,8 +103,8 @@ class Sampler extends ChangeNotifier {
     if (path == null) return;
     final pad = pads[i];
     try {
-      final h = pad.loopHandle;
-      if (h != null && soloud.getIsValidVoiceHandle(h)) await soloud.stop(h);
+      if (isLatched(pad)) await soloud.stop(pad.loopHandle!);
+      pad.loopHandle = null;
       final old = pad.source;
       pad.source = await soloud.loadFile(path);
       if (old != null) await soloud.disposeSource(old);
