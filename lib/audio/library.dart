@@ -1,93 +1,124 @@
 import 'dart:convert';
 import 'dart:io';
 
-import 'package:file_picker/file_picker.dart';
 import 'package:flutter/foundation.dart';
+import 'package:hackdj_media/hackdj_media.dart';
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 
 import 'models.dart';
 
-/// The track collection. Imported files are copied into the app's documents
-/// directory so they stay readable on iOS/Android after the picker's temporary
-/// copy is cleaned up. The index is a small JSON file next to them.
+enum LibraryAccess {
+  /// Not asked yet.
+  unknown,
+  granted,
+  denied,
+
+  /// Not Android, so there is no device library to read.
+  unsupported,
+}
+
+/// The music on the device (internal storage and SD card), read straight from
+/// the Android MediaStore. Nothing is copied or imported: only audio files the
+/// system has indexed as music show up. Detected BPMs are remembered in a small
+/// JSON file.
 class Library extends ChangeNotifier {
+  /// Formats the custom sampler pads accept.
   static const extensions = ['mp3', 'wav', 'flac', 'ogg', 'm4a', 'aac', 'opus'];
 
   final List<Track> tracks = [];
-  late Directory _tracksDir;
-  late File _index;
-  bool importing = false;
+  final Map<String, double> _bpms = {};
+  File? _bpmFile;
+
+  LibraryAccess access = LibraryAccess.unknown;
+  bool scanning = false;
+  String? error;
 
   Future<void> load() async {
-    final docs = await getApplicationDocumentsDirectory();
-    _tracksDir = Directory(p.join(docs.path, 'tracks'));
-    await _tracksDir.create(recursive: true);
-    _index = File(p.join(docs.path, 'library.json'));
-    if (await _index.exists()) {
-      try {
-        final list = jsonDecode(await _index.readAsString()) as List<dynamic>;
-        tracks
-          ..clear()
-          ..addAll(
-            list
-                .map((e) => Track.fromJson(e as Map<String, dynamic>))
-                .where((t) => File(t.path).existsSync()),
-          );
-      } catch (e) {
-        debugPrint('Library index unreadable: $e');
-      }
-    }
-    notifyListeners();
-  }
-
-  Future<void> _save() async {
-    await _index.writeAsString(jsonEncode(tracks.map((t) => t.toJson()).toList()));
-  }
-
-  /// Opens the system picker and imports the selected audio files.
-  /// Returns how many new tracks were added.
-  Future<int> importFiles() async {
-    importing = true;
-    notifyListeners();
-    var added = 0;
     try {
-      final picked = await FilePicker.pickFiles(
-        type: FileType.custom,
-        allowedExtensions: extensions,
-      );
-      for (final f in picked) {
-        final src = f.path;
-        if (src == null) continue;
-        final name = p.basename(src);
-        final dest = p.join(_tracksDir.path, name);
-        if (tracks.any((t) => t.path == dest)) continue;
-        await File(src).copy(dest);
-        tracks.add(Track(path: dest, title: p.basenameWithoutExtension(name)));
-        added++;
+      final docs = await getApplicationDocumentsDirectory();
+      final file = File(p.join(docs.path, 'bpm.json'));
+      _bpmFile = file;
+      if (await file.exists()) {
+        final map = jsonDecode(await file.readAsString()) as Map<String, dynamic>;
+        for (final e in map.entries) {
+          _bpms[e.key] = (e.value as num).toDouble();
+        }
       }
-      tracks.sort((a, b) => a.title.toLowerCase().compareTo(b.title.toLowerCase()));
-      await _save();
     } catch (e) {
-      debugPrint('Import failed: $e');
+      debugPrint('BPM cache unreadable: $e');
     }
-    importing = false;
+
+    if (!HackdjMedia.supported) {
+      access = LibraryAccess.unsupported;
+    } else if (await HackdjMedia.hasPermission()) {
+      await scan();
+      return;
+    }
     notifyListeners();
-    return added;
   }
 
-  Future<void> remove(Track t) async {
-    tracks.remove(t);
+  /// Asks for permission to read the device's music (if needed) and scans.
+  Future<void> ensureAccess() async {
+    if (access == LibraryAccess.granted ||
+        access == LibraryAccess.unsupported ||
+        scanning) {
+      return;
+    }
+    final ok = await HackdjMedia.requestPermission();
+    if (!ok) {
+      access = LibraryAccess.denied;
+      notifyListeners();
+      return;
+    }
+    await scan();
+  }
+
+  /// Reads every song on the device again.
+  Future<void> scan() async {
+    if (scanning) return;
+    scanning = true;
+    error = null;
+    notifyListeners();
     try {
-      await File(t.path).delete();
-    } catch (_) {}
-    await _save();
+      final items = await HackdjMedia.queryAudio();
+      tracks.clear();
+      for (final a in items) {
+        tracks.add(
+          Track(
+            path: a.path,
+            title: a.title,
+            artist: a.artist,
+            album: a.album,
+            durationMs: a.durationMs,
+            mediaId: a.id,
+            bpm: _bpms[a.path],
+          ),
+        );
+      }
+      access = LibraryAccess.granted;
+    } catch (e) {
+      error = 'Could not read your music: $e';
+      debugPrint(error);
+    }
+    scanning = false;
     notifyListeners();
   }
 
   void setBpm(Track t, double bpm) {
     t.bpm = bpm;
-    _save();
+    _bpms[t.path] = bpm;
+    _saveBpms();
     notifyListeners();
+  }
+
+  Future<void> _saveBpms() async {
+    final file = _bpmFile;
+    if (file == null) return;
+    try {
+      await file.writeAsString(jsonEncode(_bpms));
+    } catch (e) {
+      debugPrint('Could not save BPM cache: $e');
+    }
   }
 }
