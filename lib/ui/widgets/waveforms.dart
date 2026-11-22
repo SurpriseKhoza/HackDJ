@@ -5,6 +5,8 @@ import 'package:flutter/widgets.dart';
 import '../../audio/deck.dart';
 import '../palette.dart';
 
+const _white = Color(0xFFFFFFFF);
+
 const _cueColors = [
   Color(0xFFF87171),
   Color(0xFF34D399),
@@ -54,10 +56,10 @@ class _ScrollPainter extends CustomPainter {
     final a = deck.loopIn;
     final b = deck.loopOut;
     if (a != null && b != null) {
-      final x1 = xOf(a.inMilliseconds / 1000);
-      final x2 = xOf(b.inMilliseconds / 1000);
+      final x1 = xOf(a.inMilliseconds / 1000).clamp(0.0, w).toDouble();
+      final x2 = xOf(b.inMilliseconds / 1000).clamp(0.0, w).toDouble();
       canvas.drawRect(
-        Rect.fromLTRB(x1.clamp(0, w), 0, x2.clamp(0, w), h),
+        Rect.fromLTRB(x1, 0, x2, h),
         Paint()
           ..color = Palette.accent.withValues(alpha: deck.loopActive ? 0.22 : 0.08),
       );
@@ -76,7 +78,7 @@ class _ScrollPainter extends CustomPainter {
           Offset(x, h),
           Paint()
             ..strokeWidth = k % 4 == 0 ? 1.6 : 1
-            ..color = Colors_white.withValues(alpha: k % 4 == 0 ? 0.28 : 0.10),
+            ..color = _white.withValues(alpha: k % 4 == 0 ? 0.28 : 0.10),
         );
       }
     }
@@ -228,6 +230,3 @@ class _OverviewPainter extends CustomPainter {
   @override
   bool shouldRepaint(_OverviewPainter o) => o.color != color;
 }
-
-// `Colors` lives in Material; keep a tiny local stand-in.
-const Colors_white = Color(0xFFFFFFFF);
