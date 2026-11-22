@@ -201,6 +201,15 @@ class DeckPanel extends StatelessWidget {
               ),
             ),
             const SizedBox(width: 6),
+            Expanded(
+              child: DjButton(
+                label: 'QNT',
+                color: color,
+                active: deck.quantize,
+                onTap: deck.toggleQuantize,
+              ),
+            ),
+            const SizedBox(width: 6),
             Expanded(child: DjButton(label: 'TAP', onTap: deck.tapTempo)),
           ],
         ),
