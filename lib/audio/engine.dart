@@ -34,7 +34,6 @@ class DjEngine extends ChangeNotifier {
 
   final ValueNotifier<double> masterLevel = ValueNotifier(0);
 
-  Timer? _ticker;
   Timer? _autoFade;
   bool _ready = false;
   bool get isReady => _ready;
@@ -64,7 +63,8 @@ class DjEngine extends ChangeNotifier {
     await library.load();
     _applyCrossfader();
 
-    _ticker = Timer.periodic(const Duration(milliseconds: 33), (_) => _tick());
+    // Runs for the whole app session, so no handle is kept.
+    Timer.periodic(const Duration(milliseconds: 33), (_) => _tick());
     _ready = true;
   }
 
