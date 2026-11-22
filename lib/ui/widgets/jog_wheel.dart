@@ -96,7 +96,7 @@ class _JogPainter extends CustomPainter {
     canvas.translate(c.dx, c.dy);
     canvas.rotate(angle);
     canvas.drawCircle(Offset.zero, r * 0.36, Paint()..color = label);
-    final dot = Paint()..color = const Color(0xFFF2F4F8);
+    final dot = Paint()..color = Palette.text;
     final dr = r * 0.035;
     for (final p in const [
       Offset(-0.16, -0.12),
