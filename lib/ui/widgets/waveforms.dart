@@ -15,8 +15,8 @@ const _cueColors = [
 ];
 
 /// Scrolling close-up waveform centred on the playhead, with a beat grid
-/// (assumes the first beat is at 0:00 – nudge with the bend buttons), hot-cue
-/// flags and the active loop region.
+/// (placed using the analysed beat offset), hot-cue flags and the active loop
+/// region.
 class ScrollingWaveform extends StatelessWidget {
   const ScrollingWaveform({super.key, required this.deck, required this.color});
 
@@ -65,20 +65,24 @@ class _ScrollPainter extends CustomPainter {
       );
     }
 
-    // Beat grid.
+    // Beat grid. Beat k sits at offset + k * beat; every 4th beat (a bar line)
+    // is drawn stronger.
     if (deck.bpm > 0) {
       final beat = 60 / deck.bpm;
-      final first = ((pos - _window) / beat).floor();
-      final last = ((pos + _window) / beat).ceil();
+      final off = deck.beatOffset;
+      final first = ((pos - _window - off) / beat).floor();
+      final last = ((pos + _window - off) / beat).ceil();
       for (var k = first; k <= last; k++) {
-        if (k < 0) continue;
-        final x = xOf(k * beat);
+        final t = off + k * beat;
+        if (t < 0) continue;
+        final bar = k % 4 == 0;
+        final x = xOf(t);
         canvas.drawLine(
           Offset(x, 0),
           Offset(x, h),
           Paint()
-            ..strokeWidth = k % 4 == 0 ? 1.6 : 1
-            ..color = _white.withValues(alpha: k % 4 == 0 ? 0.28 : 0.10),
+            ..strokeWidth = bar ? 1.6 : 1
+            ..color = _white.withValues(alpha: bar ? 0.28 : 0.10),
         );
       }
     }
