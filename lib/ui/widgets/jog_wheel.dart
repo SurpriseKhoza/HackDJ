@@ -5,9 +5,10 @@ import 'package:flutter/widgets.dart';
 import '../../audio/deck.dart';
 import '../palette.dart';
 
-/// Platter-style jog wheel. The marker rotates at 33⅓ rpm of *track time*, so it
-/// speeds up / slows down with the tempo. Touch to hold the record, drag to
-/// scrub (and "scratch" by seeking).
+/// Platter-style jog wheel: a solid deck-coloured disc with a darker centre
+/// label. The marker rotates at 33⅓ rpm of *track time*, so it speeds up /
+/// slows down with the tempo. Touch to hold the record, drag to scrub and
+/// scratch.
 class JogWheel extends StatefulWidget {
   const JogWheel({super.key, required this.deck, required this.color, required this.size});
 
@@ -71,44 +72,48 @@ class _JogPainter extends CustomPainter {
     final c = size.center(Offset.zero);
     final r = size.shortestSide / 2 - 2;
 
-    // Outer glow ring (brighter while playing).
+    // Solid platter with a thin black rim; dimmer while the deck is stopped.
+    canvas.drawCircle(
+      c,
+      r,
+      Paint()..color = color.withValues(alpha: deck.playing ? 1 : 0.85),
+    );
     canvas.drawCircle(
       c,
       r,
       Paint()
         ..style = PaintingStyle.stroke
-        ..strokeWidth = 5
-        ..color = color.withValues(alpha: deck.playing ? 0.9 : 0.35),
+        ..strokeWidth = 2.5
+        ..color = const Color(0xFF000000),
     );
 
-    // Platter body.
-    canvas.drawCircle(c, r - 6, Paint()..color = const Color(0xFF0D121B));
-
-    // Vinyl grooves.
-    final groove = Paint()
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = 1
-      ..color = const Color(0xFF1A2232);
-    for (var g = r - 14; g > r * 0.42; g -= 7) {
-      canvas.drawCircle(c, g, groove);
-    }
-
-    // Rotating label + marker.
+    // Rotating centre label with a cluster of white dots, so the spin is easy
+    // to see.
     final turns = deck.position.value.inMilliseconds / 1000 * revPerSecond;
     final angle = turns * 2 * math.pi;
+    final label = Color.lerp(color, const Color(0xFF000000), 0.62)!;
     canvas.save();
     canvas.translate(c.dx, c.dy);
     canvas.rotate(angle);
-    canvas.drawCircle(Offset.zero, r * 0.36, Paint()..color = color.withValues(alpha: 0.85));
-    canvas.drawCircle(Offset.zero, r * 0.07, Paint()..color = const Color(0xFF0D121B));
-    canvas.drawLine(
-      Offset(0, -r * 0.40),
-      Offset(0, -(r - 10)),
-      Paint()
-        ..strokeWidth = 4
-        ..strokeCap = StrokeCap.round
-        ..color = Palette.text,
-    );
+    canvas.drawCircle(Offset.zero, r * 0.36, Paint()..color = label);
+    final dot = Paint()..color = const Color(0xFFF2F4F8);
+    final dr = r * 0.035;
+    for (final p in const [
+      Offset(-0.16, -0.12),
+      Offset(-0.06, -0.02),
+      Offset(0.04, -0.12),
+      Offset(0.12, 0.0),
+      Offset(0.02, 0.10),
+    ]) {
+      canvas.drawOval(
+        Rect.fromCenter(
+          center: Offset(p.dx * r, p.dy * r),
+          width: dr * 2,
+          height: dr * 2.6,
+        ),
+        dot,
+      );
+    }
     canvas.restore();
   }
 
