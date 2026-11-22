@@ -40,18 +40,27 @@ enum CrossfaderCurve {
       CrossfaderCurve.values[(index + 1) % CrossfaderCurve.values.length];
 }
 
+/// A song on the device.
 class Track {
-  Track({required this.path, required this.title, this.bpm});
-
-  factory Track.fromJson(Map<String, dynamic> json) => Track(
-        path: json['path'] as String,
-        title: json['title'] as String,
-        bpm: (json['bpm'] as num?)?.toDouble(),
-      );
+  Track({
+    required this.path,
+    required this.title,
+    this.artist,
+    this.album,
+    this.durationMs = 0,
+    this.mediaId,
+    this.bpm,
+  });
 
   final String path;
   final String title;
+  final String? artist;
+  final String? album;
+  final int durationMs;
+
+  /// MediaStore id, used to look up cover art.
+  final int? mediaId;
   double? bpm;
 
-  Map<String, dynamic> toJson() => {'path': path, 'title': title, 'bpm': bpm};
+  Duration get duration => Duration(milliseconds: durationMs);
 }
